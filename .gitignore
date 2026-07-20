@@ -1,0 +1,6 @@
+*.bin
+*.dat
+*.exe
+*.ko
+*.o
+extracted/
