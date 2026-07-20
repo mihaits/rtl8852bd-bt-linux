@@ -102,41 +102,60 @@ rtl8852bd_mp_chip_new.dat
 
 This `.dat` is Realtek's firmware for the **8852BD** chip, not laptop-specific —
 any vendor's Realtek Bluetooth driver package for a `0bda:b853` adapter contains a
-working copy (Dell, HP, Asus, or Realtek's own driver all do). Download the
-Bluetooth driver for your machine from your vendor's support site — for example,
-on Lenovo: *Support → your model → Drivers & Software → Bluetooth*. It is an Inno
-Setup installer, so it extracts on Linux with `innoextract`, no Windows needed:
+working copy (Dell, HP, Asus, or Realtek's own driver all do).
+
+Go to your vendor's support site and download the **Bluetooth driver** for your
+model — on Lenovo: *Support → your model → Drivers & Software → Bluetooth*. What
+you get is a **Windows installer `.exe`**, usually with a cryptic name such as
+`53lo030fqufmvnj0.exe`. **Do not run it or rename it** — just note where it
+downloaded to (e.g. `~/Downloads/53lo030fqufmvnj0.exe`).
+
+You do **not** need to extract anything by hand: `install.sh` takes that `.exe`
+directly (it runs `innoextract` for you internally). Skip straight to Step 2.
+
+<details>
+<summary>Optional: extract the <code>.dat</code> yourself instead of passing the <code>.exe</code></summary>
+
+The `.exe` is an Inno Setup installer, so it unpacks on Linux — no Windows needed:
 
 ```bash
-innoextract -s -d extracted your-bluetooth-driver.exe
+innoextract -s -d extracted ~/Downloads/53lo030fqufmvnj0.exe
 find extracted -name 'rtl8852bd_mp_chip_new.dat'
 ```
-
-You can also just hand the `.exe` straight to `install.sh` and it extracts the
-`.dat` for you.
 
 Sanity check — the file should begin with the ASCII magic `BTNIC003`:
 
 ```bash
-head -c 8 rtl8852bd_mp_chip_new.dat    # -> BTNIC003
+head -c 8 path/to/rtl8852bd_mp_chip_new.dat    # -> BTNIC003
 ```
+
+You would then pass that `.dat` to `install.sh` instead of the `.exe`.
+</details>
 
 ## Step 2 — install
 
 ```bash
 git clone https://github.com/mihaits/rtl8852bd-bt-linux
 cd rtl8852bd-bt-linux
+```
+
+`install.sh` takes **one argument** — the path to the driver you downloaded.
+Point it at the vendor `.exe` and it extracts the firmware itself:
+
+```bash
+sudo ./install.sh ~/Downloads/53lo030fqufmvnj0.exe
+```
+
+(substitute your own downloaded filename). It decides what to do from the
+extension: a `.exe` is unpacked with `innoextract` automatically, anything else is
+treated as an already-extracted `.dat`:
+
+```bash
 sudo ./install.sh /path/to/rtl8852bd_mp_chip_new.dat
 ```
 
-or let it extract the driver for you:
-
-```bash
-sudo ./install.sh /path/to/bluetooth-driver.exe
-```
-
-The installer builds the firmware, installs a DKMS module, clears a stale rfkill
-block if present, reloads the driver, and verifies the result.
+Either way the installer then builds the firmware, installs a DKMS module, clears
+a stale rfkill block if present, reloads the driver, and verifies the result.
 
 ## Verify
 
