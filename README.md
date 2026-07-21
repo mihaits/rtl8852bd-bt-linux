@@ -72,20 +72,30 @@ worth understanding before you install on an untested kernel:
 - The **new code** (the eco-4 download) uses only long-stable kernel APIs
   (`request_firmware`, `kmalloc`, `__hci_cmd_sync`, `put_unaligned_le32`) — nothing
   version-fragile.
-- The **base** `btrtl.c` is a snapshot of the module as of **kernel 6.8**. Because
-  it replaces the in-tree module, its exported symbols must stay ABI-compatible
-  with the `btusb` your kernel already has. If a kernel changes the internal
+- The **base** `btrtl.c` is a snapshot of the module as of **kernel 6.8**, carried
+  forward with two small version-guarded shims so the same source builds on newer
+  kernels too: the `<asm/unaligned.h>` → `<linux/unaligned.h>` move (6.12) and the
+  `hdev->quirks` bitmap → `hci_set_quirk()` accessor change (6.14). Because the
+  module replaces the in-tree one, its exported symbols must stay ABI-compatible
+  with the `btusb` your kernel already has. If a future kernel changes the internal
   `btrtl`↔`btusb` interface, this copy may fail to build, or build but refuse to
   bind (symbol-version/CRC mismatch) — in which case Bluetooth simply won't come
   up and you should `./uninstall.sh`.
 - No out-of-tree DKMS module is signed, so it will not load under **Secure Boot**
   unless you enroll a MOK. Disable Secure Boot or sign the module yourself.
 
-**Tested:** Lenovo LOQ 15ARP10E, Ubuntu 22.04.5 HWE, kernel **6.8.0** (x86_64);
-the module also builds cleanly across the 6.8 point-release series. Other kernel
-series are **untested** — the 6.8 LTS line (Ubuntu 22.04.5 / 24.04) is the known-good
-target. It is safe to try elsewhere: a failed build or bind is reversible with
-`./uninstall.sh`, and the stock `btrtl` returns.
+**Tested — verified working on real hardware:**
+
+| Distro | Kernel | Notes |
+|---|---|---|
+| Ubuntu 22.04.5 HWE | **6.8.0** (x86_64) | original target (Lenovo LOQ 15ARP10E) |
+| Ubuntu 25.10 | **6.17.0** (x86_64) | built + bound cleanly via the 6.12/6.14 shims |
+
+The module also builds cleanly across the 6.8 point-release series, and the shims
+cover the whole 6.12+/6.14+ API range (so Ubuntu 24.04's newer HWE kernels are
+expected to work too). Anything outside those points is **untested** but safe to
+try: a failed build or bind is reversible with `./uninstall.sh`, and the stock
+`btrtl` returns.
 
 > Requires a distro that ships `btusb`/`btrtl` as separate modules (effectively
 > everything from the last several years). x86_64 is what this was built and tested
