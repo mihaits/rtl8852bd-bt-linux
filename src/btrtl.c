@@ -7,8 +7,11 @@
 
 #include <linux/module.h>
 #include <linux/firmware.h>
-#include <linux/version.h>
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)
+/* <asm/unaligned.h> moved to <linux/unaligned.h> in kernel 6.12. Test for the
+ * header directly rather than gating on a version number, so a distro that
+ * backports the move into an older-numbered kernel is still handled correctly.
+ */
+#if __has_include(<linux/unaligned.h>)
 #include <linux/unaligned.h>
 #else
 #include <asm/unaligned.h>
