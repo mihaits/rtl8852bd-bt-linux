@@ -1,9 +1,33 @@
 # RTL8852BD Bluetooth for Linux
 
 Makes the Realtek **RTL8852BD** Bluetooth radio (USB ID `0bda:b853`) work on Linux.
+This chip ships in many RTL8852BE Wi-Fi/Bluetooth combo cards in 2024–2025 laptops;
+Wi-Fi works out of the box, Bluetooth does not on any current kernel.
 
-This chip ships in many RTL8852BE Wi-Fi/Bluetooth combo cards found in 2024–2025
-laptops. Wi-Fi works out of the box; Bluetooth does not, on any current kernel.
+## Quick start
+
+```bash
+# 1. Confirm this is your chip — BOTH must match (see "Does this apply?" below)
+lsusb | grep -i 0bda:b853               # the Bluetooth adapter is present
+dmesg | grep -i "RTL: rom_version"      # must report  version=3
+
+# 2. Download your laptop's Windows Bluetooth driver .exe (see "Get the firmware")
+
+# 3. Install
+git clone https://github.com/mihaits/rtl8852bd-bt-linux
+cd rtl8852bd-bt-linux
+sudo ./install.sh ~/Downloads/your-driver.exe
+```
+
+The installer extracts the firmware from that `.exe`, builds a DKMS module, and
+brings the radio up. It persists across reboots and kernel updates. Not working or
+want it gone? `sudo ./uninstall.sh` restores the stock driver.
+
+**Requirements:** `dkms`, `build-essential`, `linux-headers-$(uname -r)`, `python3`,
+and `innoextract` (for the `.exe`). `install.sh` installs anything missing on
+apt-based systems.
+
+---
 
 ## Does this apply to my machine?
 
@@ -18,113 +42,34 @@ dmesg | grep -i "RTL: rom_version"            # must say  version=3
 silicon cut that reports **`rom_version=3`** (a.k.a. "8852BD"). If yours reports a
 different version, you have a different cut and this is not your fix.
 
+The tell-tale symptom is Bluetooth silently dead — `hci0` never comes up, its
+address is all-zeros, and `dmesg` shows **`didn't find patch for chip id 3`**.
+
+<details>
+<summary>Laptops reported to ship this chip</summary>
+
 The `0bda:b853` / RTL8852BE combo is common in 2024–2025 laptops. Families reported
 to ship it include **Lenovo** LOQ / IdeaPad / Legion / ThinkBook, **HP** Victus /
 15-fc, **Acer** Nitro / Aspire, and **Asus** TUF / Vivobook. This is not a
 compatibility guarantee — the same model can ship Intel or MediaTek radios in other
 batches, and not every 8852BE unit is the `rom_version=3` cut. The two commands
 above are the only reliable test.
+</details>
 
-## The problem
+## Get the firmware
 
-`btrtl` detects the chip, then fails silently:
+**No firmware is included here** — it is proprietary Realtek code that cannot be
+redistributed. You supply it from your own laptop's Windows driver. You need the file
+`rtl8852bd_mp_chip_new.dat`, which is Realtek's firmware for the 8852BD chip (not
+laptop-specific — any vendor's Realtek Bluetooth driver for a `0bda:b853` adapter has
+a working copy: Dell, HP, Asus, or Realtek's own driver all do).
 
-```
-Bluetooth: hci0: RTL: examining hci_ver=0b hci_rev=000b lmp_ver=0b lmp_subver=8852
-Bluetooth: hci0: RTL: rom_version status=0 version=3
-Bluetooth: hci0: RTL: loading rtl_bt/rtl8852bu_fw.bin
-Bluetooth: hci0: RTL: didn't find patch for chip id 3      <-- the giveaway
-```
-
-and `hci0` never opens:
-
-```
-$ hciconfig hci0 up
-Can't init device hci0: Invalid argument (22)
-$ hciconfig -a
-hci0: BD Address: 00:00:00:00:00:00
-```
-
-This silicon revision reports `rom_version=3`, so it needs a firmware patch with
-**eco 4**. The `rtl8852bu_fw.bin` in `linux-firmware` contains only eco 1 and 2, so
-the parser extracts zero bytes and returns `-ENODATA`. It is a firmware-content
-gap, not a kernel bug — and no mainline kernel or `linux-firmware` release ships
-eco-4 for this cut.
-
-The eco-4 firmware *does* exist, in Realtek's Windows driver. This package
-repacks it and adds the download path the chip needs.
-
-> `Opcode 0xfcf0 failed: -16` in your logs is unrelated — a red herring.
-
-## Requirements
-
-- `dkms`, `build-essential`, `linux-headers-$(uname -r)`, `python3`
-- `innoextract` — only if you point the installer at a vendor `.exe`
-
-`install.sh` installs missing packages automatically on apt-based systems.
-
-### Kernel compatibility
-
-This ships a **patched copy of the whole `btrtl` module** and lets DKMS build it
-against your running kernel, replacing the in-tree `btrtl`. That has consequences
-worth understanding before you install on an untested kernel:
-
-- The **new code** (the eco-4 download) uses only long-stable kernel APIs
-  (`request_firmware`, `kmalloc`, `__hci_cmd_sync`, `put_unaligned_le32`) — nothing
-  version-fragile.
-- The **base** `btrtl.c` is a snapshot of the module as of **kernel 6.8**, carried
-  forward with two small compatibility shims so the same source builds on newer
-  kernels too: the `<asm/unaligned.h>` → `<linux/unaligned.h>` move (6.12) and the
-  `hdev->quirks` bitmap → `hci_set_quirk()` accessor change (6.14). Both are keyed
-  off the feature actually being present (`__has_include`, `#ifndef`) rather than a
-  kernel version number, so a distro that backports either change is handled
-  correctly. Because the
-  module replaces the in-tree one, its exported symbols must stay ABI-compatible
-  with the `btusb` your kernel already has. If a future kernel changes the internal
-  `btrtl`↔`btusb` interface, this copy may fail to build, or build but refuse to
-  bind (symbol-version/CRC mismatch) — in which case Bluetooth simply won't come
-  up and you should `./uninstall.sh`.
-- No out-of-tree DKMS module is signed, so it will not load under **Secure Boot**
-  unless you enroll a MOK. Disable Secure Boot or sign the module yourself.
-
-**Tested — verified working on real hardware:**
-
-| Distro | Kernel | Notes |
-|---|---|---|
-| Ubuntu 22.04.5 HWE | **6.8.0** (x86_64) | original target (Lenovo LOQ 15ARP10E) |
-| Ubuntu 25.10 | **6.17.0** (x86_64) | built + bound cleanly via the 6.12/6.14 shims |
-
-The module also builds cleanly across the 6.8 point-release series, and the shims
-cover the whole 6.12+/6.14+ API range (so Ubuntu 24.04's newer HWE kernels are
-expected to work too). Anything outside those points is **untested** but safe to
-try: a failed build or bind is reversible with `./uninstall.sh`, and the stock
-`btrtl` returns.
-
-> Requires a distro that ships `btusb`/`btrtl` as separate modules (effectively
-> everything from the last several years). x86_64 is what this was built and tested
-> on; other architectures are unverified.
-
-## Step 1 — obtain the firmware
-
-**No firmware is included here.** It is proprietary Realtek code and cannot be
-redistributed. You need one file:
-
-```
-rtl8852bd_mp_chip_new.dat
-```
-
-This `.dat` is Realtek's firmware for the **8852BD** chip, not laptop-specific —
-any vendor's Realtek Bluetooth driver package for a `0bda:b853` adapter contains a
-working copy (Dell, HP, Asus, or Realtek's own driver all do).
-
-Go to your vendor's support site and download the **Bluetooth driver** for your
-model — on Lenovo: *Support → your model → Drivers & Software → Bluetooth*. What
-you get is a **Windows installer `.exe`**, usually with a cryptic name such as
-`53lo030fqufmvnj0.exe`. **Do not run it or rename it** — just note where it
-downloaded to (e.g. `~/Downloads/53lo030fqufmvnj0.exe`).
-
-You do **not** need to extract anything by hand: `install.sh` takes that `.exe`
-directly (it runs `innoextract` for you internally). Skip straight to Step 2.
+Go to your vendor's support site and download the **Bluetooth driver** for your model
+— on Lenovo: *Support → your model → Drivers & Software → Bluetooth*. You'll get a
+**Windows installer `.exe`** with a cryptic name like `53lo030fqufmvnj0.exe`.
+**Don't run or rename it** — just note where it downloaded (e.g.
+`~/Downloads/53lo030fqufmvnj0.exe`) and pass that path to `install.sh`. It runs
+`innoextract` on the `.exe` for you; you don't extract anything by hand.
 
 <details>
 <summary>Optional: extract the <code>.dat</code> yourself instead of passing the <code>.exe</code></summary>
@@ -134,59 +79,44 @@ The `.exe` is an Inno Setup installer, so it unpacks on Linux — no Windows nee
 ```bash
 innoextract -s -d extracted ~/Downloads/53lo030fqufmvnj0.exe
 find extracted -name 'rtl8852bd_mp_chip_new.dat'
+head -c 8 path/to/rtl8852bd_mp_chip_new.dat    # sanity check -> should print  BTNIC003
 ```
 
-Sanity check — the file should begin with the ASCII magic `BTNIC003`:
-
-```bash
-head -c 8 path/to/rtl8852bd_mp_chip_new.dat    # -> BTNIC003
-```
-
-You would then pass that `.dat` to `install.sh` instead of the `.exe`.
+Then pass that `.dat` to `install.sh` instead of the `.exe`.
 </details>
 
-## Step 2 — install
+## Install
 
 ```bash
 git clone https://github.com/mihaits/rtl8852bd-bt-linux
 cd rtl8852bd-bt-linux
+sudo ./install.sh ~/Downloads/53lo030fqufmvnj0.exe     # your downloaded filename
 ```
 
-`install.sh` takes **one argument** — the path to the driver you downloaded.
-Point it at the vendor `.exe` and it extracts the firmware itself:
-
-```bash
-sudo ./install.sh ~/Downloads/53lo030fqufmvnj0.exe
-```
-
-(substitute your own downloaded filename). It decides what to do from the
-extension: a `.exe` is unpacked with `innoextract` automatically, anything else is
-treated as an already-extracted `.dat`:
+`install.sh` takes **one argument** and decides what to do from the extension: a
+`.exe` is unpacked with `innoextract` automatically; anything else is treated as an
+already-extracted `.dat`:
 
 ```bash
 sudo ./install.sh /path/to/rtl8852bd_mp_chip_new.dat
 ```
 
-Either way the installer then builds the firmware, installs a DKMS module, clears
-a stale rfkill block if present, reloads the driver, and verifies the result.
+Either way it then builds the firmware, installs the DKMS module, clears a stale
+rfkill block if present, reloads the driver, and verifies the result.
 
 ## Verify
 
 ```
-$ dmesg | grep -i rtl
-Bluetooth: hci0: RTL: RTL8852BD: using multi-record eco4 download
-Bluetooth: hci0: RTL: RTL8852BD eco4 firmware loaded (3 records)
-
 $ hciconfig hci0
 hci0:  Type: Primary  Bus: USB
-       BD Address: XX:XX:XX:XX:XX:XX
+       BD Address: XX:XX:XX:XX:XX:XX          # a real address, not all-zeros
        UP RUNNING
 
 $ bluetoothctl scan on          # should list nearby devices
 ```
 
-Confirm the patch is actually running — the controller reports a different
-firmware version once it is:
+To confirm the patch is actually running, read the controller version — it changes
+once the firmware is live:
 
 ```bash
 sudo hcitool -i hci0 cmd 0x04 0x01
@@ -207,40 +137,82 @@ rfkill list bluetooth
 sudo rfkill unblock bluetooth
 ```
 
-`systemd-rfkill` restores a *saved* block at every boot, so if the radio was
-disabled while it was broken the block survives the fix. `install.sh` clears the
-saved state; if it comes back, enable Bluetooth once in your desktop settings so
-the correct state is saved on shutdown.
+`systemd-rfkill` restores a *saved* block at every boot, so if the radio was disabled
+while it was broken the block survives the fix. `install.sh` clears the saved state;
+if it comes back, enable Bluetooth once in your desktop settings so the correct state
+is saved on shutdown.
 
 **`hciconfig` shows nothing.** Check the device is present and bound:
 `lsusb | grep 0bda:b853` and `dmesg | grep -i bluetooth`.
 
-**Module didn't build.** Make sure `linux-headers-$(uname -r)` matches your
-running kernel, then `sudo dkms build -m rtl8852bd-bt -v 1.0` to see the error.
+**Module didn't build.** Make sure `linux-headers-$(uname -r)` matches your running
+kernel, then `sudo dkms build -m rtl8852bd-bt -v 1.0` to see the error.
 
-**Still on ROM firmware after install** (`0x000B8852` above). The download ran but
-the patch did not launch — check `dmesg` for `eco4` errors and confirm your `.dat`
-is for **8852BD**, not `rtl8852b_mp_chip_new.dat` or `rtl8852c_mp_chip_new.dat`.
-
-## Kernel updates
-
-DKMS rebuilds the module automatically on kernel upgrades. Nothing to do.
+**Still on ROM firmware after install** (`0x000B8852` above). The download ran but the
+patch did not launch — check `dmesg` for `eco4` errors and confirm your `.dat` is for
+**8852BD**, not `rtl8852b_mp_chip_new.dat` or `rtl8852c_mp_chip_new.dat`.
 
 ## Uninstall
 
 ```bash
-sudo ./uninstall.sh
+sudo ./uninstall.sh          # removes the module + firmware, restores stock btrtl
 ```
+
+Kernel updates need no action — DKMS rebuilds the module automatically.
+
+---
+
+## Compatibility & caveats
+
+This ships a **patched copy of the whole `btrtl` module** and lets DKMS build it
+against your running kernel, replacing the in-tree `btrtl`. Worth knowing before you
+install on an untested kernel:
+
+- The **new code** (the eco-4 download) uses only long-stable kernel APIs — nothing
+  version-fragile.
+- The **base** `btrtl.c` is a snapshot of the module as of **kernel 6.8**, carried
+  forward with two small compatibility shims so the same source builds on newer
+  kernels: the `<asm/unaligned.h>` → `<linux/unaligned.h>` move (6.12) and the
+  `hdev->quirks` bitmap → `hci_set_quirk()` accessor change (6.14). Both are keyed off
+  the feature actually being present (`__has_include`, `#ifndef`) rather than a kernel
+  version number, so a distro that backports either change is handled correctly.
+- Because the module replaces the in-tree one, its exported symbols must stay
+  ABI-compatible with the `btusb` your kernel already has. If a future kernel changes
+  the internal `btrtl`↔`btusb` interface, this copy may fail to build or refuse to
+  bind (symbol-version/CRC mismatch) — Bluetooth just won't come up and you should
+  `./uninstall.sh`.
+- No out-of-tree DKMS module is signed, so it won't load under **Secure Boot** unless
+  you enroll a MOK. Disable Secure Boot or sign the module yourself.
+
+**Tested — verified working on real hardware:**
+
+| Distro | Kernel | Notes |
+|---|---|---|
+| Ubuntu 22.04.5 HWE | **6.8.0** (x86_64) | original target (Lenovo LOQ 15ARP10E) |
+| Ubuntu 25.10 | **6.17.0** (x86_64) | built + bound cleanly via the 6.12/6.14 shims |
+
+The module also builds cleanly across the 6.8 point-release series, and the shims
+cover the whole 6.12+/6.14+ API range (so Ubuntu 24.04's newer HWE kernels are
+expected to work too). Anything outside those points is **untested** but safe to try:
+a failed build or bind is reversible with `./uninstall.sh`. Requires a distro that
+ships `btusb`/`btrtl` as separate modules (effectively everything from the last
+several years); x86_64 is what this was built and tested on, other architectures are
+unverified.
 
 ## How it works
 
-`btrtl` normally parses firmware in the EPATCH/`RTBTCore` format and picks the
-snippet whose eco matches `rom_version + 1`. There is no eco-4 snippet for this
-chip anywhere in `linux-firmware`, so that path dead-ends.
+`btrtl` detects the chip, then fails silently — `dmesg` shows `didn't find patch for
+chip id 3` and `hci0` never opens. This silicon revision reports `rom_version=3`, so
+it needs a firmware patch with **eco 4**. The `rtl8852bu_fw.bin` in `linux-firmware`
+contains only eco 1 and 2, so the parser extracts zero bytes and gives up. It's a
+firmware-content gap, not a kernel bug — no mainline kernel or `linux-firmware`
+release ships eco-4 for this cut. (The `Opcode 0xfcf0 failed: -16` you may see in the
+logs is unrelated — a red herring.)
 
-Realtek's Windows driver does not use EPATCH for this part. It ships the patch as
-three independent records in a `BTNIC003` container, each with its own RAM load
-address, and pushes them with a vendor download protocol:
+The eco-4 firmware *does* exist, in Realtek's Windows driver — but not in the
+EPATCH/`RTBTCore` format `btrtl` expects. It ships as three independent records in a
+`BTNIC003` container, each with its own RAM load address, pushed with a vendor
+download protocol:
 
 | opcode | meaning |
 |---|---|
@@ -259,33 +231,32 @@ for each record:
 fc20  [0x80]                                       # commit, once, at the end
 ```
 
-Miss the pointer write and every record lands on the default buffer
-(`0x8010f720`). All commands still return success, the firmware is resident, and
-the controller answers HCI — but the code is not where the entry point expects it,
-so the patch never launches and the radio stays dead. That failure is completely
-silent, which is what makes this chip so confusing to debug.
+Miss the pointer write and every record lands on the default buffer (`0x8010f720`).
+All commands still return success, the firmware is resident, and the controller
+answers HCI — but the code isn't where the entry point expects it, so the patch never
+launches and the radio stays dead. That silent failure is what makes this chip so
+confusing to debug.
 
-`extract-firmware.py` repacks the `.dat` records into a small container
-(`E4RD` + count + `[load][len][blob]` per record) that the patched
-`rtl_download_eco4()` in `src/btrtl.c` reads.
+`extract-firmware.py` repacks the `.dat` records into a small container (`E4RD` +
+count + `[load][len][blob]` per record) that the patched `rtl_download_eco4()` in
+`src/btrtl.c` reads.
 
-One wrinkle if you are adapting this: the stock parser fails with a *different*
-errno depending on which container `linux-firmware` shipped for your kernel —
-`-EINVAL` for the v1 `Realtech` EPATCH format, `-ENODATA` for v2 `RTBTCore`. The
-hook accepts both, scoped by chip ID so it cannot swallow unrelated failures.
+One wrinkle if you're adapting this: the stock parser fails with a *different* errno
+depending on which container `linux-firmware` shipped for your kernel — `-EINVAL` for
+the v1 `Realtech` EPATCH format, `-ENODATA` for v2 `RTBTCore`. The hook accepts both,
+scoped by chip ID so it cannot swallow unrelated failures.
 
 ## Upstreaming
 
-This is a self-contained addition to `btrtl.c` and would be better in mainline.
-The blocker is that the firmware itself is not in `linux-firmware`; Realtek would
-need to publish eco-4 for 8852BD. Patches and reports welcome.
+This is a self-contained addition to `btrtl.c` and would be better in mainline. The
+blocker is that the firmware itself is not in `linux-firmware`; Realtek would need to
+publish eco-4 for 8852BD. Patches and reports welcome.
 
 ## License
 
-`src/btrtl.c`, `src/btrtl.h`, `src/hci_codec.h` are derived from the Linux kernel
-and remain **GPL-2.0**. The scripts in this repository are GPL-2.0 as well.
-
-No Realtek firmware is included or redistributed.
+`src/btrtl.c`, `src/btrtl.h`, `src/hci_codec.h` are derived from the Linux kernel and
+remain **GPL-2.0**. The scripts in this repository are GPL-2.0 as well. No Realtek
+firmware is included or redistributed.
 
 ## Disclaimer
 
@@ -296,11 +267,10 @@ kernel maintainer**, and I can't vouch for this code the way someone who writes
 Bluetooth drivers for a living could. It is provided **as is**, with no warranty of
 any kind.
 
-Concretely, that means: it loads vendor-provided firmware onto your Bluetooth
-controller and replaces an in-tree kernel module via DKMS; it is validated on
-exactly one laptop and one kernel series; and while a bad outcome is reversible
-(`./uninstall.sh` restores the stock module), you run it at your own risk. Read the
-scripts before running them as root — you should do that with anything off the
-internet, and doubly so here.
+Concretely: it loads vendor-provided firmware onto your Bluetooth controller and
+replaces an in-tree kernel module via DKMS; it is validated on one laptop across a
+couple of kernels; and while a bad outcome is reversible (`./uninstall.sh` restores
+the stock module), you run it at your own risk. Read the scripts before running them
+as root — you should do that with anything off the internet, and doubly so here.
 
 Unofficial, and not affiliated with Realtek or any laptop vendor.
