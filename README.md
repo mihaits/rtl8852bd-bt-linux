@@ -73,9 +73,12 @@ worth understanding before you install on an untested kernel:
   (`request_firmware`, `kmalloc`, `__hci_cmd_sync`, `put_unaligned_le32`) — nothing
   version-fragile.
 - The **base** `btrtl.c` is a snapshot of the module as of **kernel 6.8**, carried
-  forward with two small version-guarded shims so the same source builds on newer
+  forward with two small compatibility shims so the same source builds on newer
   kernels too: the `<asm/unaligned.h>` → `<linux/unaligned.h>` move (6.12) and the
-  `hdev->quirks` bitmap → `hci_set_quirk()` accessor change (6.14). Because the
+  `hdev->quirks` bitmap → `hci_set_quirk()` accessor change (6.14). Both are keyed
+  off the feature actually being present (`__has_include`, `#ifndef`) rather than a
+  kernel version number, so a distro that backports either change is handled
+  correctly. Because the
   module replaces the in-tree one, its exported symbols must stay ABI-compatible
   with the `btusb` your kernel already has. If a future kernel changes the internal
   `btrtl`↔`btusb` interface, this copy may fail to build, or build but refuse to
