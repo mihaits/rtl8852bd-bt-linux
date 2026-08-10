@@ -1,0 +1,28 @@
+#!/bin/sh
+# Installed as /etc/kernel/postinst.d/zz-rtl8852bd-bt by install.sh.
+#
+# Why this exists: our DKMS module is named "btrtl", the same as the in-tree
+# module. On a kernel update, dkms autoinstall *builds* our module but its
+# module-version sanity check declines to install it over the same-named
+# in-tree btrtl, so nothing lands in updates/dkms/ and the stock module (which
+# has no eco-4 path) loads -- Bluetooth silently breaks after every kernel bump.
+#
+# This hook runs after the stock "dkms" postinst hook (zz- sorts last) and
+# force-installs our module for the newly installed kernel so it self-heals.
+# It must never break a kernel install, so every step is best-effort.
+
+PKG=rtl8852bd-bt
+VER=1.0
+KVER="$1"                       # kernel version, passed by run-parts
+
+[ -n "$KVER" ] || exit 0
+command -v dkms >/dev/null 2>&1 || exit 0
+# Only act if our module source is registered with DKMS.
+dkms status -m "$PKG" -v "$VER" 2>/dev/null | grep -q "$PKG" || exit 0
+
+# A stale "installed" state makes `dkms install --force` a silent no-op, so
+# clear it first, then force a real build+install into updates/dkms/.
+dkms uninstall -m "$PKG" -v "$VER" -k "$KVER" >/dev/null 2>&1 || true
+dkms install   -m "$PKG" -v "$VER" -k "$KVER" --force >/dev/null 2>&1 || true
+
+exit 0

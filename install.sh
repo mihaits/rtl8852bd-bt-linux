@@ -95,6 +95,15 @@ dkms install -m "$PKG" -v "$VER" --force >/dev/null
 depmod -a
 grn "  installed $(modinfo -n btrtl 2>/dev/null || echo btrtl.ko)"
 
+# Kernel-update self-heal: dkms autoinstall builds our same-named module on a
+# kernel bump but declines to install it over the in-tree btrtl, so without a
+# hook Bluetooth breaks after every kernel update. Install one that force-lands
+# our module for each new kernel. Named zz-* so it runs after the stock "dkms"
+# postinst hook (no dot -- run-parts ignores dotted names).
+HOOK=/etc/kernel/postinst.d/zz-rtl8852bd-bt
+install -D -m 0755 "$HERE/kernel-postinst-hook" "$HOOK"
+grn "  installed kernel-update hook $HOOK"
+
 # ----------------------------------------------------------------- rfkill ---
 # A stale systemd-rfkill saved state will silently keep the radio soft-blocked
 # at every boot, which looks exactly like a firmware failure. Clear it.

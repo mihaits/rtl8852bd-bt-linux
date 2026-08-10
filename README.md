@@ -158,7 +158,25 @@ patch did not launch — check `dmesg` for `eco4` errors and confirm your `.dat`
 sudo ./uninstall.sh          # removes the module + firmware, restores stock btrtl
 ```
 
-Kernel updates need no action — DKMS rebuilds the module automatically.
+### Kernel updates
+
+Because this module is named `btrtl` — the same as the in-tree one — DKMS's
+automatic rebuild on a kernel update *builds* it but its sanity check declines to
+install it over the stock module, so plain DKMS would leave you back on the stock
+driver (Bluetooth dead) after every kernel bump. To handle this, `install.sh`
+installs a small hook at `/etc/kernel/postinst.d/zz-rtl8852bd-bt` that force-lands
+our module for each newly installed kernel. So kernel updates should need no action.
+
+If Bluetooth ever *does* break right after a kernel update, re-run `install.sh` with
+your firmware, or repair the current kernel by hand:
+
+```bash
+K=$(uname -r)
+sudo dkms uninstall -m rtl8852bd-bt -v 1.0 -k "$K"
+sudo dkms install   -m rtl8852bd-bt -v 1.0 -k "$K" --force   # --force alone is a
+sudo modprobe -r btusb btrtl && sudo modprobe btusb          # no-op without the
+                                                             # uninstall first
+```
 
 ---
 

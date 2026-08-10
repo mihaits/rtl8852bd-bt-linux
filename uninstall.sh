@@ -8,6 +8,9 @@ FW=/lib/firmware/rtl_bt/rtl8852bd_eco4.bin
 
 [[ $EUID -eq 0 ]] || { echo "run as root (sudo ./uninstall.sh)"; exit 1; }
 
+echo "==> Removing kernel-update hook"
+rm -f /etc/kernel/postinst.d/zz-rtl8852bd-bt
+
 echo "==> Removing DKMS module"
 dkms remove -m "$PKG" -v "$VER" --all 2>/dev/null || true
 rm -rf "/usr/src/$PKG-$VER"
